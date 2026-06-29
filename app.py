@@ -88,54 +88,76 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True
 )
 
-# ========== 4. خوارزمية المعالجة المتطورة بـ OpenCV ==========
+# ========== 4. خوارزمية المعالجة المطورة والمستقرة 100% ==========
 def enhance_image_v1(image_bytes, b_offset, crop_flag):
+    # قراءة الصورة من الذاكرة
     nparr = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     
-    # تحسين احترافي للإضاءة والتباين (ملاءمة لمعايير الإعلانات)
+    if img is None:
+        return None
+
+    h_orig, w_orig = img.shape[:2]
+
+    # 1. تحسين احترافي وشامل للإضاءة والألوان (محرك CLAHE)
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     cl = clahe.apply(l)
     limg = cv2.merge((cl, a, b))
     img_enhanced = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
     
+    # تطبيق السطوع اليدوي الإضافي إن وجد
     if b_offset != 0:
         img_enhanced = cv2.convertScaleAbs(img_enhanced, alpha=1.0, beta=b_offset)
     
-    # الاقتصاص الذكي
+    # 2. الاقتصاص الذكي المحمي (لتجنب التكبير الجائر والقص الخاطئ)
+    img_cropped = img_enhanced.copy()
     if crop_flag:
         gray = cv2.cvtColor(img_enhanced, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        edged = cv2.Canny(blurred, 40, 180)
+        blurred = cv2.GaussianBlur(gray, (9, 9), 0)
+        edged = cv2.Canny(blurred, 30, 150)
         contours, _ = cv2.findContours(edged.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         if contours:
             large_contour = max(contours, key=cv2.contourArea)
-            x, y, w, h = cv2.boundingRect(large_contour)
-            p = 25
-            h_i, w_i = img_enhanced.shape[:2]
-            img_enhanced = img_enhanced[max(0, y-p):min(h_i, y+h+p), max(0, x-p):min(w_i, x+w+p)]
+            # التأكد من أن المساحة المكتشفة ليست صغيرة جداً (تجنباً للزوم الخاطئ)
+            if cv2.contourArea(large_contour) > (h_orig * w_orig * 0.05):
+                x, y, w, h = cv2.boundingRect(large_contour)
+                padding = int(max(w, h) * 0.1) # إضافة هامش أمان بنسبة 10% حول المنتج
+                
+                y1 = max(0, y - padding)
+                y2 = min(h_orig, y + h + padding)
+                x1 = max(0, x - padding)
+                x2 = min(w_orig, x + w + padding)
+                
+                # القص الفعلي فقط إذا كانت الأبعاد منطقية
+                if (y2 - y1) > 50 and (x2 - x1) > 50:
+                    img_cropped = img_enhanced[y1:y2, x1:x2]
 
-    # تحويل لمربع كامل 1024x1024
+    # 3. تحويل المنتج إلى مربع كامل 1024x1024 بخلفية بيضاء نقية
     target_size = 1024
-    h_c, w_c = img_enhanced.shape[:2]
+    h_c, w_c = img_cropped.shape[:2]
+    
+    # حساب نسبة التصغير/التكبير للحفاظ على النسبة الأبعاد الأصلية (Aspect Ratio)
     scale = target_size / max(h_c, w_c)
     new_w, new_h = int(w_c * scale), int(h_c * scale)
-    img_resized = cv2.resize(img_enhanced, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    img_resized = cv2.resize(img_cropped, (new_w, new_h), interpolation=cv2.INTER_AREA)
     
+    # إنشاء لوحة بيضاء مربعة فارغة
     final_square = np.ones((target_size, target_size, 3), dtype=np.uint8) * 255
+    
+    # وضع المنتج المحسن في سنتر وتوسط المربع تماماً
     x_offset = (target_size - new_w) // 2
     y_offset = (target_size - new_h) // 2
     final_square[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = img_resized
     
     return final_square
 
-# ========== 5. التشغيل واستخراج النتائج ==========
+# ========== 5. التشغيل وعرض النتائج على الجوال بشكل متناسق ==========
 if uploaded_files:
     if len(uploaded_files) > remaining_images:
-        st.error(f"❌ عدد الصور المرفوعة ({len(uploaded_files)}) أكبر من المتبقي في باقتك ({remaining_images}). يرجى تقليل الصور.")
+        st.error(f"❌ عدد الصور المرفوعة أكبر من المتبقي في باقتك.")
     else:
         if st.button("🚀 ابدأ معالجة الصور الآن"):
             progress_bar = st.progress(0)
@@ -143,30 +165,37 @@ if uploaded_files:
             
             for idx, file in enumerate(uploaded_files):
                 result_cv = enhance_image_v1(file.read(), extra_brightness, auto_crop)
-                result_rgb = cv2.cvtColor(result_cv, cv2.COLOR_BGR2RGB)
-                result_pil = Image.fromarray(result_rgb)
+                if result_cv is not None:
+                    result_rgb = cv2.cvtColor(result_cv, cv2.COLOR_BGR2RGB)
+                    result_pil = Image.fromarray(result_rgb)
+                    st.session_state.processed_images.append((file.name, result_pil))
                 
-                st.session_state.processed_images.append((file.name, result_pil))
-                st.session_state.processed_count += 1
                 progress_bar.progress((idx + 1) / len(uploaded_files))
                 
-            st.success("✅ اكتمل التعديل!")
+            st.success("✅ اكتمل التعديل بنجاح!")
 
 if st.session_state.processed_images:
-    st.markdown("### 🖼️ معاينة وتحميل نتائجك:")
+    st.markdown("### 🖼️ معاينة وتنزيل النتائج:")
     
-    # تجهيز ملف الـ ZIP مباشرة في ذاكرة الجوال
+    # عرض الصور الملتقطة داخل شبكة متناسقة تناسب شاشات الجوال الصغيرة ولا تملأ الصفحة بشكل مزعج
+    cols = st.columns(2)
+    for idx, (name, img) in enumerate(st.session_state.processed_images):
+        with cols[idx % 2]:
+            st.image(img, caption="صورة جاهزة للمتجر", use_container_width=True)
+            
+    # تجهيز ملف الـ ZIP مباشرة في الذاكرة
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, 'w') as zip_file:
         for name, img in st.session_state.processed_images:
             img_bytes = io.BytesIO()
-            img.save(img_bytes, format='JPEG', quality=92)
+            img.save(img_bytes, format='JPEG', quality=95)
             zip_file.writestr(f"pro_{name.rsplit('.', 1)[0]}.jpg", img_bytes.getvalue())
             
     zip_buffer.seek(0)
     
+    st.markdown("<br>", unsafe_allow_html=True)
     st.download_button(
-        label="📥 حفظ الصور المعدلة إلى الجوال (ملف ZIP)",
+        label="📥 حفظ جميع الصور المعدلة إلى الجوال (ملف ZIP)",
         data=zip_buffer,
         file_name=f"products_1024x1024.zip",
         mime="application/zip"
