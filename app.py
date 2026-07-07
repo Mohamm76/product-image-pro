@@ -27,7 +27,10 @@ if "processed_images" not in st.session_state:
 if not st.session_state.authenticated:
     st.markdown("<div style='max-width: 500px; margin: 0 auto;'>", unsafe_allow_html=True)
     st.markdown("### 🔑 تفعيل النظام")
-    input_key = st.text_input("أدخل كود التفعيل المستلم من متجر Payhip / Gumroad:", type="password")
+    # ❌ الكود القديم المسبب للمشكلة:
+    # input_key = st.text_input("أدخل كود التفعيل المستلم من متجر Payhip / Gumroad:", type="password")
+    # ✅ الكود الجديد المعدل والمستجيب فوراً على الجوال:
+    input_key = st.text_input("أدخل كود التفعيل المستلم من متجر Payhip / Gumroad:")
     
     if st.button("تحقق وتفعيل الحساب 🚀", use_container_width=True):
         is_valid, key_info = validate_activation_key(input_key.strip())
